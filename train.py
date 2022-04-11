@@ -32,7 +32,7 @@ import warnings, tqdm
 warnings.filterwarnings('ignore', category=BadInitialCandidatesWarning)
 warnings.filterwarnings('ignore', category=RuntimeWarning)
 
-BATCH_SIZE = 4
+BATCH_SIZE = 32
 tkwargs = {
     "dtype": torch.double,
     "device": torch.device("cpu") # "cuda:0" if torch.cuda.is_available() else 
@@ -40,9 +40,7 @@ tkwargs = {
 SMOKE_TEST = os.environ.get("SMOKE_TEST")
 NUM_RESTARTS = 20 if not SMOKE_TEST else 2
 RAW_SAMPLES = 1024 if not SMOKE_TEST else 4
-d = problem.dim
-standard_bounds = torch.zeros(2, problem.dim, **tkwargs)
-standard_bounds[1] = 1
+
 N_TRIALS = 3 if not SMOKE_TEST else 2
 N_BATCH = 30 if not SMOKE_TEST else 10
 MC_SAMPLES = 128  if not SMOKE_TEST else 16
@@ -63,7 +61,9 @@ tempCacheInfo = {'Sydney1': {'size': 100, 'type': 'LRU'}, 'Brisbane2': {'size': 
 bounds = [1, 100]
 topology = NetTopology('topology/Aarnet.gml', 'Sydney1', cacheDictInfo=tempCacheInfo)
 problem = CDNOptimizationProblem(topology, batch_size=BATCH_SIZE, runReqNums=1000, tkwargs=tkwargs, bounds=bounds)
-
+d=problem.dim
+standard_bounds = torch.zeros(2, problem.dim, **tkwargs)
+standard_bounds[1] = 1
 
 NOISE_SE = torch.tensor([15.19, 0.63], **tkwargs)
 
