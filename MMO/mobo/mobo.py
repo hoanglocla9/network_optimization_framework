@@ -64,6 +64,7 @@ class MOBO:
             self.Y = Y
         else:
             self.X = np.vstack([self.X, X])
+            Y = np.array(Y).reshape(-1, 1)
             self.Y = np.vstack([self.Y, Y])
         self.sample_num += len(X)
 

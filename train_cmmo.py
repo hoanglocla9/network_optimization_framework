@@ -2,7 +2,7 @@ import os
 import time
 import argparse
 
-import torch
+import torch, pickle
 
 from CMMO.graphGP.kernels.diffusionkernel import DiffusionKernel
 from CMMO.graphGP.models.gp_regression import GPRegression
@@ -23,7 +23,7 @@ from CMMO.experiments.test_functions.binary_categorical import Ising, Contaminat
 from CMMO.experiments.test_functions.multiple_categorical import PestControl, Centroid
 from CMMO.experiments.MaxSAT.maximum_satisfiability import MaxSAT28, MaxSAT43, MaxSAT60
 from CMMO.experiments.NAS.nas_binary import NASBinary
-from CMMO.experiments.test_functions.multi_objective import CDN_RAM
+from CMMO.experiments.test_functions.multi_objective import CDN_RAM, MO_Knapsack
 from cdn.topology import NetTopology
 import numpy as np
 
@@ -32,18 +32,20 @@ from pymoo.algorithms.moo.nsga2 import NSGA2
 from pymoo.core.problem import Problem
 from pymoo.factory import get_algorithm, get_crossover, get_mutation, get_sampling
 from pymoo.optimize import minimize
+from pymoo.factory import get_performance_indicator
 
-
+from CMMO.graphGP.sampler.tool_partition import group_input
 
 
 from CMMO.acquisition.acquisition_marginalization import acquisition_expectation
 
 from CMMO.acquisition.acquisition_optimizers.starting_points import optim_inits
 
+from CMMO.acquisition.acquisition_marginalization import prediction_statistic
 
 
 def run_suggest(surrogate_model, eval_inputs, eval_outputs, n_vertices, adj_mat_list, log_beta, sorted_partition,
-                acquisition_func, parallel):
+                acquisition_func, parallel, graph_search):
     start_time = time.time()
     reference = torch.min(eval_outputs, dim=0)[0].item()
     print('(%s) Sampling' % time.strftime('%H:%M:%S', time.gmtime()))
@@ -59,14 +61,14 @@ def run_suggest(surrogate_model, eval_inputs, eval_outputs, n_vertices, adj_mat_
                                            hyper_samples, log_beta_samples, partition_samples,
                                            freq_samples, basis_samples)
     suggestion = next_evaluation(x_opt, eval_inputs, inference_samples, partition_samples, edge_mat_samples,
-                                 n_vertices, acquisition_func, reference, parallel)
+                                 n_vertices, acquisition_func, reference, parallel, graph_search)
     processing_time = time.time() - start_time
     return suggestion, log_beta, sorted_partition, processing_time
 
 
-def run_bo(exp_dirname, task, store_data, parallel):
-    bo_data_filename = os.path.join(exp_dirname, 'bo_data.pt')
-    bo_data = torch.load(bo_data_filename)
+def run_bo(exp_dirname, task, store_data, parallel, graph_search):
+    bo_data_filename = os.path.join(exp_dirname, f'bo_data_{graph_search}.pt')
+    bo_data = torch.load(bo_data_filename) ######## load
     surrogate_model = bo_data['surrogate_model']
     eval_inputs = bo_data['eval_inputs']
     eval_outputs = bo_data['eval_outputs']
@@ -88,7 +90,7 @@ def run_bo(exp_dirname, task, store_data, parallel):
         suggestion, log_beta, sorted_partition, processing_time = run_suggest(
             surrogate_model=surrogate_model, eval_inputs=eval_inputs, eval_outputs=eval_outputs, n_vertices=n_vertices,
             adj_mat_list=adj_mat_list, log_beta=log_beta, sorted_partition=sorted_partition,
-            acquisition_func=acquisition_func, parallel=parallel)
+            acquisition_func=acquisition_func, parallel=parallel, graph_search=graph_search)
 
         next_input, pred_mean, pred_std, pred_var = suggestion
         eval_inputs = torch.cat([eval_inputs, next_input.view(1, -1)], 0)
@@ -100,14 +102,16 @@ def run_bo(exp_dirname, task, store_data, parallel):
         updated = True
 
     if eval_inputs.size(0) - 1 == eval_outputs.size(0) and task in ['evaluate', 'both']:
-        next_output = objective.evaluate(eval_inputs[-1], func_idx=0).view(1, 1)
+        next_output = objective.evaluate(eval_inputs[-1]).view(1, 1)
         eval_outputs = torch.cat([eval_outputs, next_output])
         assert not torch.isnan(eval_outputs).any()
 
         time_list.append(time.time())
 
         updated = True
-
+    print("==========")
+    print(eval_inputs.shape)
+    print("+++++++++++++++++")
     if updated:
         bo_data = {'surrogate_model': surrogate_model, 'eval_inputs': eval_inputs, 'eval_outputs': eval_outputs,
                    'n_vertices': n_vertices, 'adj_mat_list': adj_mat_list, 'log_beta': log_beta,
@@ -116,7 +120,7 @@ def run_bo(exp_dirname, task, store_data, parallel):
                    'pred_mean_list': pred_mean_list, 'pred_std_list': pred_std_list, 'pred_var_list': pred_var_list}
         torch.save(bo_data, bo_data_filename)
 
-        displaying_and_logging(os.path.join(experiment_directory(), exp_dirname, 'log'), eval_inputs, eval_outputs,
+        displaying_and_logging(os.path.join(exp_dirname, 'log'), eval_inputs, eval_outputs,
                                pred_mean_list, pred_std_list, pred_var_list,
                                time_list, elapse_list, store_data)
         print('Optimizing %s with regularization %.2E, random seed : %s'
@@ -127,7 +131,7 @@ def run_bo(exp_dirname, task, store_data, parallel):
 
 
 
-def COMBO(objective=None, n_eval=200, dir_name=None, parallel=False, store_data=False, task='both', **kwargs):
+def COMBO(objective=None, n_eval=200, dir_name=None, parallel=False, store_data=False, task='both', graph_search='ga', **kwargs):
     """
 
     :param objective:
@@ -196,48 +200,47 @@ def COMBO(objective=None, n_eval=200, dir_name=None, parallel=False, store_data=
                    'sorted_partition': sorted_partition, 'time_list': time_list, 'elapse_list': elapse_list,
                    'pred_mean_list': pred_mean_list, 'pred_std_list': pred_std_list, 'pred_var_list': pred_var_list,
                    'acquisition_func': acquisition_func, 'objective': objective}
-        torch.save(bo_data, os.path.join(exp_dirname, 'bo_data.pt'))
+        torch.save(bo_data, os.path.join(exp_dirname, f'bo_data_{graph_search}.pt'))
 
     for _ in range(n_eval):    
-        run_bo(exp_dirname, task, store_data, parallel)
+        run_bo(exp_dirname, task, store_data, parallel, graph_search)
         
         
-mobo_data = None
-inference_samples_list, reference_list, partition_samples_list = [], [], []
 
 
 class AcquisistionProblem(Problem):
-    def __init__(self, n_var, n_obj, n_constr, xl, xu, n_vertices, acquisition_func, surrogate_models, reference_list, inference_samples_list, partition_samples_list, edge_mat_samples):
+    def __init__(self, n_var, n_obj, xl, xu, n_vertices, acquisition_func, surrogate_models, reference_list, inference_samples_list, partition_samples_list, isKnapsack=False):
+        if isKnapsack:
+            n_constr = 0
+        else:
+            n_constr = 0
         super().__init__(n_var, n_obj, n_constr, xl, xu, stype_var=int)
+        self.isKnapsack = isKnapsack
+        if self.isKnapsack:
+            self.n_obj = n_obj - 1
         self.n_vertices = n_vertices
         self.acquisition_func = acquisition_func
         self.surrogate_models = surrogate_models
         self.reference_list = reference_list
         self.inference_samples_list = inference_samples_list
         self.partition_samples_list = partition_samples_list
-        self.edge_mat_samples = edge_mat_samples
         
     def _evaluate(self, x, out, *args, **kwargs):
         out["F"] = []
         
         results = []
         for idx, surr_model in enumerate(self.surrogate_models):
-#             rnd_nbd = torch.cat(tuple([torch.randint(low=0, high=int(n_v), size=(20000, 1)) for n_v in self.n_vertices]), dim=1).long()
-#             min_nbd = neighbors(torch.tensor(x), partition_samples_list[idx], self.edge_mat_samples, self.n_vertices, uniquely=False)
-#             shuffled_ind = list(range(min_nbd.size(0)))
-#             np.random.shuffle(shuffled_ind)
-#             X = torch.cat(tuple([min_nbd[shuffled_ind[:10]], rnd_nbd]), dim=0)
-        
             acq_value = acquisition_expectation(torch.tensor(x), self.inference_samples_list[idx], \
                                         self.partition_samples_list[idx], self.n_vertices, \
                                                 self.acquisition_func, self.reference_list[idx])
             results.append(acq_value)
-            s
-        out["F"] = np.stack(results, axis=1).reshape(-1, self.n_obj)
-
-
+        if not self.isKnapsack:
+            out["F"] = np.stack(results, axis=1).reshape(-1, self.n_obj) # -1.0 * 
+        else:
+            out["F"] = np.stack(results[:-1], axis=1).reshape(-1, self.n_obj) #-1.0 * 
+            # out["G"] = results[-1].reshape(-1, )
         
-def CMMO (problem, n_eval=10, store_data=False, parallel=False):
+def CMMO (problem, n_eval=10, store_data=False, parallel=False, isKnapsack=False):
     global inference_samples_list, partition_samples_list, mobo_data, reference_list
     n_vertices = problem.n_vertices
     adj_mat_list = problem.adjacency_mat
@@ -246,15 +249,15 @@ def CMMO (problem, n_eval=10, store_data=False, parallel=False):
     fourier_basis_list = problem.fourier_basis
     suggested_init = problem.suggested_init  # suggested_init should be 2d tensor
     n_init = suggested_init.size(0)
-    
     elapse_list = [0] * n_init
     pred_mean_list = [0] * n_init
     pred_std_list = [0] * n_init
     pred_var_list = [0] * n_init
     eval_inputs = suggested_init
     acquisition_func = expected_improvement
-    path_to_file = os.path.join('/home/picarib/Desktop/network_optimization_framework/', 'bo_data.pt')
-    if not os.path.isfile('/home/picarib/Desktop/network_optimization_framework/bo_data.pt'):
+    path_to_file = os.path.join('/mnt/c/Users/La Loc/Desktop/network_optimization_framework', 'bo_data.pt')
+    
+    if not os.path.isfile('/mnt/c/Users/La Loc/Desktop/network_optimization_framework/bo_data.pt'):
         log_beta_list = []
         sorted_partition_list = []
         eval_outputs_list = []
@@ -263,14 +266,16 @@ def CMMO (problem, n_eval=10, store_data=False, parallel=False):
             kernel = DiffusionKernel(grouped_log_beta=grouped_log_beta,
                                  fourier_freq_list=fourier_freq_list, fourier_basis_list=fourier_basis_list)
             GP = GPRegression(kernel)
+            print(i)
             eval_outputs = problem.evaluate(eval_inputs, func_idx=i).reshape(eval_inputs.size(0), 1).to(device=eval_inputs.device)
             log_beta = eval_outputs.new_zeros(eval_inputs.size(1))
-            sorted_partition = [[m] for m in range(eval_inputs.size(1))]
-            
+            sorted_partition = [[m] for m in range(eval_inputs.size(1))] ## == n of variable
             GP.init_param(eval_outputs)
             print('(%s) Burn-in for (%s)/(%s)' % (time.strftime('%H:%M:%S', time.gmtime()), str(i), str(problem.n_objectives)))
             sample_posterior = posterior_sampling(GP, eval_inputs, eval_outputs, n_vertices, adj_mat_list,
                                                   log_beta, sorted_partition, n_sample=1, n_burn=99, n_thin=1)
+            
+            print(n_vertices.shape)
             _, log_beta_samples, partition_samples, _, _, _ = sample_posterior
             log_beta = log_beta_samples[-1]
             sorted_partition = partition_samples[-1]
@@ -290,21 +295,23 @@ def CMMO (problem, n_eval=10, store_data=False, parallel=False):
         torch.save(mobo_data, path_to_file)
     else:
         mobo_data = torch.load(path_to_file)
-        
+    eval_outputs_list = torch.cat(mobo_data['eval_outputs']).reshape(-1, eval_inputs.size(0))
+    inference_samples_list = []
+    partition_samples_list = []
     for _ in range(n_eval):
         print('(%s) Sampling' % time.strftime('%H:%M:%S', time.localtime()))
-        reference_list = [torch.min(mobo_data['eval_outputs'][0], dim=0)[0].item()] * problem.n_objectives
+        reference_list = [torch.min(eval_outputs_list[0], dim=0)[0].item()] * problem.n_objectives
+        x_init_list = []
         for idx, GP in enumerate(mobo_data['surrogate_model']):
             log_beta, sorted_partition, eval_outputs = \
-                mobo_data['log_beta'][idx], mobo_data['sorted_partition'][idx], mobo_data['eval_outputs'][idx]
+                mobo_data['log_beta'][idx], mobo_data['sorted_partition'][idx], eval_outputs_list[idx].reshape(-1, 1)
             
             reference_list[idx] = torch.min(eval_outputs, dim=0)[0].item()
-            
             sample_posterior = posterior_sampling(GP, eval_inputs, eval_outputs, n_vertices, adj_mat_list,
                                           log_beta, sorted_partition, n_sample=10, n_burn=0, n_thin=1)
             hyper_samples, log_beta_samples, partition_samples, freq_samples, basis_samples, edge_mat_samples = sample_posterior
-            log_beta = log_beta_samples[-1]
-            sorted_partition = partition_samples[-1]
+            mobo_data['log_beta'][idx] = log_beta_samples[-1]
+            mobo_data['sorted_partition'][idx] = partition_samples[-1]
             print('\n')
             inference_samples = inference_sampling(eval_inputs, eval_outputs, n_vertices,
                                            hyper_samples, log_beta_samples, partition_samples,
@@ -312,73 +319,64 @@ def CMMO (problem, n_eval=10, store_data=False, parallel=False):
             
             inference_samples_list.append(inference_samples)
             partition_samples_list.append(partition_samples)
-        
-        
-        acq_problem = AcquisistionProblem(problem.dim, problem.n_objectives, 0, 0, \
-                                          9, n_vertices, acquisition_func, \
+            
+            # x_opt = eval_inputs[torch.argmin(eval_outputs)]
+            # x_init, acq_inits = optim_inits(x_opt, inference_samples, partition_samples, edge_mat_samples, n_vertices,
+            #                          acquisition_func, reference_list[idx])
+            # print()
+            # x_init_list.append(x_init)
+        # x_inits = np.atleast_2d(np.stack(x_init_list, axis=0))
+        # print('x_init: ' + str(x_opt))
+        acq_problem = AcquisistionProblem(problem.dim, problem.n_objectives, problem._bounds[0], \
+                                          problem._bounds[1], n_vertices, acquisition_func, \
                                           mobo_data['surrogate_model'], reference_list, inference_samples_list, \
-                                          partition_samples_list, edge_mat_samples)
+                                          partition_samples_list, isKnapsack=isKnapsack)
         
-        algorithm = NSGA2(pop_size=100,sampling=get_sampling("int_random"),
+        algorithm = NSGA2(pop_size=100,sampling=get_sampling("int_random"), # 
                        crossover=get_crossover("int_sbx", prob=1.0, eta=3.0),
                        mutation=get_mutation("int_pm", eta=3.0),
                        eliminate_duplicates=True)
 
-        minimize(acq_problem,
+        res = minimize(acq_problem,
                  algorithm,
                  ('n_gen', 10),
                  seed=1,
                  verbose=True)
-
-
-# def CMMO (problem, n_eval=10, store_data=False, parallel=False, task='both'):
-#     global inference_samples_list, partition_samples_list, mobo_data, reference_list
-#     n_vertices = problem.n_vertices
-#     adj_mat_list = problem.adjacency_mat
-#     grouped_log_beta = torch.ones(len(problem.fourier_freq))
-#     fourier_freq_list = problem.fourier_freq
-#     fourier_basis_list = problem.fourier_basis
-#     suggested_init = problem.suggested_init  # suggested_init should be 2d tensor
-#     n_init = suggested_init.size(0)
-#     acquisition_func = expected_improvement
-    
-#     path_to_file = os.path.join('/home/picarib/Desktop/network_optimization_framework/', 'bo_data.pt')
-    
-#     kernel = DiffusionKernel(grouped_log_beta=grouped_log_beta,
-#                                  fourier_freq_list=fourier_freq_list, fourier_basis_list=fourier_basis_list)
-    
-#     GP = GPRegression(kernel)
-#     eval_inputs = suggested_init
-#     eval_outputs = problem.evaluate(eval_inputs, func_idx=0).reshape(eval_inputs.size(0), 1).to(device=eval_inputs.device)
-#     log_beta = eval_outputs.new_zeros(eval_inputs.size(1))
-#     sorted_partition = [[m] for m in range(eval_inputs.size(1))]
-#     time_list = [time.time()] * n_init
-#     elapse_list = [0] * n_init
-#     pred_mean_list = [0] * n_init
-#     pred_std_list = [0] * n_init
-#     pred_var_list = [0] * n_init
-
-#     GP.init_param(eval_outputs)
-#     print('(%s) Burn-in for ' % time.strftime('%H:%M:%S', time.gmtime()))
-#     sample_posterior = posterior_sampling(GP, eval_inputs, eval_outputs, n_vertices, adj_mat_list,
-#                                                   log_beta, sorted_partition, n_sample=1, n_burn=99, n_thin=1)
-#     hyper_samples, log_beta_samples, partition_samples, freq_samples, basis_samples, edge_mat_samples = sample_posterior
-#     log_beta = log_beta_samples[-1]
-#     sorted_partition = partition_samples[-1]
-#     print('')
         
-#     bo_data = {'surrogate_model': GP, 'eval_inputs': eval_inputs, 'eval_outputs': eval_outputs,
-#                    'n_vertices': n_vertices, 'adj_mat_list': adj_mat_list, 'log_beta': log_beta,
-#                    'sorted_partition': sorted_partition, 'time_list': time_list, 'elapse_list': elapse_list,
-#                    'pred_mean_list': pred_mean_list, 'pred_std_list': pred_std_list, 'pred_var_list': pred_var_list,
-#                    'acquisition_func': acquisition_func, 'objective': problem}
-#     torch.save(bo_data, os.path.join('./', 'bo_data.pt'))
+        x_next = uncertaintySelection(torch.tensor(res.X), inference_samples_list, partition_samples_list,  n_vertices)
+        y_next = problem.evaluate(x_next,func_idx=problem.n_objectives)
+        eval_inputs = torch.cat([eval_inputs, x_next])
+        eval_outputs_list = torch.cat([eval_outputs_list.transpose(0, 1), y_next]).transpose(0, 1) # num_kernel, number_x
+        metric_ = get_performance_indicator("hv", ref_point=np.array([torch.max(eval_outputs_list[0]), torch.max(eval_outputs_list[1])]))
+        print(np.array(eval_outputs_list.transpose(0,1))[:,:-1].shape)
+        hv = metric_.do(np.array(eval_outputs_list.transpose(0,1))[:,:-1])
+        print('Current HV: ' + str(hv))
+        save_data = {'res': res, 'problem': problem}
+        with open("./result_cmmo.pkl", "wb") as f:
+            pickle.dump(save_data, f)
+            
 
-#     for _ in range(n_eval):    
-#         run_bo('./', task, store_data, parallel)
-#         print("done")
-        
-        
+def uncertaintySelection(x, inference_samples_list, partition_samples_list,  n_vertices, batch_size=4):
+    Y_std = []
+    for idx, inference_samples in enumerate(inference_samples_list): # == number of kernel
+        pred_var_sample_list = []
+        for s in range(len(inference_samples)):
+            hyper = inference_samples[s].model.param_to_vec()
+            grouped_x = group_input(x, sorted_partition=partition_samples_list[idx][s], n_vertices=n_vertices)
+            pred_dist = inference_samples[s].predict(grouped_x, hyper=hyper)
+            # pred_mean_sample = pred_dist[0].detach
+            pred_var_sample = pred_dist[1].detach()
+            pred_var_sample_list.append(pred_var_sample[:,0])
+        var_sample = torch.stack(pred_var_sample_list, 1).mean(1, keepdim=True)
+        Y_std.append(torch.sqrt(var_sample.reshape(-1,)))
+    Y_std = torch.stack(Y_std).reshape(-1, len(inference_samples_list)) # (num_x, num_kernel)
+    uncertainty = torch.prod(Y_std, axis=1)
+    uncertainty = np.array(uncertainty)
+    top_indices = np.argsort(uncertainty)[::-1][:batch_size]
+    
+    x_return = np.array(x)[top_indices]
+    return torch.tensor(x_return)
+
 if __name__ == '__main__':
     parser_ = argparse.ArgumentParser(
         description='CMMO : Combinatorial Bayesian Optimization using the graph Cartesian product')
@@ -390,7 +388,7 @@ if __name__ == '__main__':
     parser_.add_argument('--parallel', dest='parallel', action='store_true', default=False)
     parser_.add_argument('--device', dest='device', type=int, default=None)
     parser_.add_argument('--task', dest='task', type=str, default='both')
-
+    parser_.add_argument('--graph_search', dest='graph_search', type=str, default='ga')
     args_ = parser_.parse_args()
     print(args_)
     kwag_ = vars(args_)
@@ -440,17 +438,23 @@ if __name__ == '__main__':
     elif objective_ == 'nasbinary':
         kwag_['objective'] = NASBinary(data_type='CIFAR10', device=args_.device)
         kwag_['store_data'] = True
-    elif objective_ == 'mobo':
+    elif objective_ == 'cdn':
         runReqNums = 1000 
         topology = NetTopology('topology/Aarnet.gml', 'Sydney1')
         problem = CDN_RAM(topology, runReqNums)
         kwag_ = {}
         kwag_['problem'] = problem
-        
+    elif objective_ == 'knapsack':
+        kwag_ = {}
+        problem = MO_Knapsack(dim=50, n_objectives=2)
+        kwag_['problem'] = problem
+        kwag_['isKnapsack'] = True
+    elif objective_ == 'knapsack_1':
+        kwag_['objective'] = MO_Knapsack(dim=10, n_objectives=1)
     else:
         if dir_name_ is None:
             raise NotImplementedError
-    if objective_ == 'mobo':
+    if objective_ in ['cdn', 'knapsack']:
         CMMO(**kwag_)
     else:
         COMBO(**kwag_)

@@ -1,8 +1,8 @@
 import numpy as np
 from pymoo.optimize import minimize
 from pymoo.util.nds.non_dominated_sorting import NonDominatedSorting
-from pymoo.operators.sampling.random_sampling import FloatRandomSampling
-from pymoo.operators.sampling.latin_hypercube_sampling import LatinHypercubeSampling
+from pymoo.operators.sampling.rnd import FloatRandomSampling, BinaryRandomSampling
+from pymoo.operators.sampling.lhs import LatinHypercubeSampling
 from MMO.external import lhs
 
 
@@ -65,7 +65,8 @@ class Solver:
                 rest_sampling = lhs(X.shape[1], pop_size - len(sampling))
                 sampling = np.vstack([sampling, rest_sampling])
         elif self.pop_init_method == 'random':
-            sampling = FloatRandomSampling()
+            # sampling = FloatRandomSampling()
+            sampling = BinaryRandomSampling()
         else:
             raise NotImplementedError
 

@@ -1,10 +1,10 @@
 import numpy as np
 from scipy.optimize import minimize
 from scipy.linalg import null_space
-from pymoo.model.algorithm import Algorithm
-from pymoo.model.duplicate import DefaultDuplicateElimination
-from pymoo.model.individual import Individual
-from pymoo.model.initialization import Initialization
+from pymoo.core.algorithm import Algorithm
+from pymoo.core.duplicate import DefaultDuplicateElimination
+from pymoo.core.individual import Individual
+from pymoo.core.initialization import Initialization
 from multiprocessing import Process, Queue, cpu_count
 import sys
 
@@ -306,7 +306,12 @@ def _pareto_discover(xs, eval_func, bounds, delta_s, origin, origin_constant, n_
     x_samples_all = []
     patch_ids = []
     for i, (x, y, f) in enumerate(zip(xs, ys, fs)):
-
+        print(x)
+        print(y)
+        print(f)
+        print(eval_func)
+        print(bounds)
+        print(delta_s)
         # local optimization by optimizing eq(4)
         x_opt = _local_optimization(x, y, f, eval_func, bounds, delta_s)
 
@@ -374,11 +379,10 @@ class ParetoDiscovery(Algorithm):
             self.eliminate_duplicates = eliminate_duplicates
 
         self.initialization = Initialization(sampling,
-                                            individual=individual,
                                             repair=repair,
                                             eliminate_duplicates=self.eliminate_duplicates)
 
-        self.n_gen = None
+        self.n_gen = 10
         self.pop = None
         self.off = None
 

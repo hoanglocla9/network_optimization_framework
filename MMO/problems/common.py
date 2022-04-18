@@ -2,6 +2,7 @@ import numpy as np
 from pymoo.factory import get_from_list, get_reference_directions
 from MMO.problems import *
 from MMO.external import lhs
+from pymoo.problems.single.knapsack import *
 
 
 def get_problem_options():
@@ -27,7 +28,8 @@ def get_problem_options():
         ('re6', RE6),
         ('re7', RE7),
         ('cdn_placement', CDN_PLACEMENT),
-        ('cdn_ram', CDN_RAM)
+        ('cdn_ram', CDN_RAM),
+        ('knapsack', MultiObjectiveKnapsack)
     ]
     return problems
 
@@ -52,10 +54,14 @@ def generate_initial_samples(problem, n_sample):
     while len(X_feasible) < n_sample:
         X = lhs(problem.n_var, n_sample)
         X = problem.xl + X * (problem.xu - problem.xl)
-        Y, feasible = problem.evaluate(X, return_values_of=['F', 'feasible'])
+        X = np.round(X)
+        Y, feasible, G = problem.evaluate(X, return_values_of=['F', 'feasible', 'G'])
         feasible = feasible.flatten()
-        X_feasible = np.vstack([X_feasible, X[feasible]])
-        Y_feasible = np.vstack([Y_feasible, Y[feasible]])
+        # feasible = not feasible
+        # X_feasible = np.vstack([X_feasible, X[feasible]])
+        # Y_feasible = np.vstack([Y_feasible, Y[feasible]])
+        X_feasible = X
+        Y_feasible = Y
     
     indices = np.random.permutation(np.arange(len(X_feasible)))[:n_sample]
     X, Y = X_feasible[indices], Y_feasible[indices]
@@ -94,11 +100,16 @@ def build_problem(name, n_var, n_obj, n_init_sample, n_process=1, extra_params=N
         problem = get_problem(name, n_var=n_var, n_obj=n_obj)
         problem.set_parameters(**extra_params)
         pareto_front = None
+    elif name.startswith('knapsack'):
+        problem = create_random_knapsack_problem(50, variant='multi')
+        problem.n_obj = 2
+        pareto_front = None
     else:
-        try:
-            problem = get_problem(name)
-        except:
-            raise NotImplementedError('problem not supported yet!')
+        problem = get_problem(name)
+#         try:
+            
+#         except:
+#             raise NotImplementedError('problem not supported yet!')
         try:
             pareto_front = problem.pareto_front()
         except:

@@ -48,7 +48,7 @@ def calc_hypervolume(pfront, ref_point):
     Calculate hypervolume of pfront based on ref_point
     '''
     hv = get_performance_indicator('hv', ref_point=ref_point)
-    return hv.calc(pfront)
+    return hv.do(pfront)
 
 
 def safe_divide(x1, x2):

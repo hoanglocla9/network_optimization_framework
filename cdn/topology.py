@@ -11,7 +11,7 @@ def generate_cache_info(graph):
     return result
 
 class NetTopology (object):
-    def __init__( self, topologyFile, mainServerId, configDirPath="/home/picarib/Desktop/network_optimization_framework/tmp/", cacheDictInfo=None):
+    def __init__( self, topologyFile, mainServerId, configDirPath="tmp/", cacheDictInfo=None):
         self.graph = nx.read_gml(topologyFile)
         self.editBandwidthInfo()
         self.cacheMemoryDict = {}

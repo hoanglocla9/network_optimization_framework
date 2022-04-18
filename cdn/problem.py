@@ -40,32 +40,23 @@ class CDNOptimizationProblem(MultiObjectiveTestProblem):
         cost =  self.cost_function(X)
         return torch.stack([-1 * traffic, -1 * cost], dim=-1).to(**self.tkwargs)
 
-    # def performance_function(self, x):
-    #     results = []
-    #     for idx, x_i in enumerate(x):
-    #         self.topo.reconfig(x_i, idx)
-    #         traffic = runSimulationWithPredefinedDistribution(self.topo, self.runReqNums, idx)
-    #         results.append(traffic)
-    #     return torch.tensor(results)
 
         
     def traffic_function(self, x):
+        data = []
         for i in range(len(x)):
             with open("./tmp/save_" + str(i), "wb") as f:
                 save_data = [self.topo, self.runReqNums, x[i]]
-                pickle.dump(save_data, f)
-                
+                data.append(save_data)
         pool = mp.Pool(processes=NUM_PROCESSORS)
-        results = pool.map(self.process_compute_perforamnce, range(len(x)))
+        results = pool.map(self.process_compute_perforamnce, data)
         
         return torch.tensor(results)
     
-    def process_compute_perforamnce(self, idx):
-        with open("./tmp/save_" + str(idx), "rb") as f:
-            data = pickle.load(f)
+    def process_compute_perforamnce(self, data):
         topo, runReqNums, x = data
-        topo.reconfig(x, idx)
-        traffic = runSimulationWithPredefinedDistribution(topo, runReqNums, idx)
+        topo.reconfig(x)
+        traffic = runSimulationWithPredefinedDistribution(topo, runReqNums)
         return int(traffic)
     
     def cost_function(self, x):

@@ -3,15 +3,31 @@ import autograd
 from autograd.numpy import row_stack
 from multiprocessing import cpu_count
 from multiprocessing.pool import ThreadPool
-from pymoo.model.problem import Problem as PymooProblem
-from pymoo.model.problem import at_least2d, evaluate_in_parallel
+from pymoo.core.problem import Problem as PymooProblem
 
 '''
 Problem definition built upon Pymoo's Problem class, added some custom features
 '''
 
 class Problem(PymooProblem):
-    
+    def __init__(self,
+                 n_var=50,
+                 n_obj=2,
+                 n_constr=1,
+                 xl=None,
+                 xu=None,
+                 check_inconsistencies=True,
+                 replace_nan_values_by=np.inf,
+                 exclude_from_serialization=None,
+                 callback=None,
+                 **kwargs):
+        super().__init__(n_var, n_obj, n_constr, xl, xu, check_inconsistencies,replace_nan_values_by, exclude_from_serialization, callback, **kwargs)
+        self.evaluation_of = ["F"]
+        if self.n_constr > 0:
+            self.evaluation_of.append("G")
+        self.elementwise_evaluation = False
+        self.parallelization = None
+        
     def evaluate(self,
                  X,
                  *args,
@@ -21,37 +37,29 @@ class Problem(PymooProblem):
 
         """
         Evaluate the given problem.
-
         The function values set as defined in the function.
         The constraint values are meant to be positive if infeasible. A higher positive values means "more" infeasible".
         If they are 0 or negative, they will be considered as feasible what ever their value is.
-
         Parameters
         ----------
-
         X : np.array
             A two dimensional matrix where each row is a point to evaluate and each column a variable.
-
         return_as_dictionary : bool
             If this is true than only one object, a dictionary, is returned. This contains all the results
             that are defined by return_values_of. Otherwise, by default a tuple as defined is returned.
-
         return_values_of : list of strings
             You can provide a list of strings which defines the values that are returned. By default it is set to
             "auto" which means depending on the problem the function values or additional the constraint violation (if
             the problem has constraints) are returned. Otherwise, you can provide a list of values to be returned.
-
             Allowed is ["F", "CV", "G", "dF", "dG", "dCV", "feasible"] where the d stands for
             derivative and h stands for hessian matrix.
-
-
         Returns
         -------
-
             A dictionary, if return_as_dictionary enabled, or a list of values as defined in return_values_of.
-
         """
-
+        
+            
+        
         # call the callback of the problem
         if self.callback is not None:
             self.callback(X)
@@ -142,7 +150,7 @@ class Problem(PymooProblem):
     def _evaluate_batch(self, X, calc_gradient, out, *args, **kwargs):
         # NOTE: to use self-calculated dF (gradient) rather than autograd.numpy, which is not supported by Pymoo
         self._evaluate(X, out, *args, calc_gradient=calc_gradient, **kwargs)
-        at_least2d(out)
+        np.atleast_2d(out)
         return out
 
     def _evaluate_elementwise(self, X, calc_gradient, out, *args, **kwargs):
@@ -170,7 +178,8 @@ class Problem(PymooProblem):
                 params = []
                 for k in range(len(X)):
                     params.append([X[k], calc_gradient, self._evaluate, args, kwargs])
-                ret = np.array(pool.starmap(evaluate_in_parallel, params))
+                # ret = np.array(pool.starmap(evaluate_in_parallel, params))
+                raise ('not support yet!!!')
         elif _type == "dask":
             if len(_params) != 2:
                 raise Exception("A distributed client objective is need for using dask. parallelization=(dask, "

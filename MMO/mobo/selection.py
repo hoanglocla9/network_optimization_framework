@@ -2,7 +2,7 @@ from abc import ABC, abstractmethod
 import numpy as np
 from sklearn.cluster import KMeans
 from pymoo.factory import get_performance_indicator
-from pymoo.algorithms.nsga2 import calc_crowding_distance
+from pymoo.algorithms.moo.nsga2 import calc_crowding_distance
 
 '''
 Selection methods for new batch of samples to evaluate on real problem
@@ -95,7 +95,6 @@ class Uncertainty(Selection):
         val = surrogate_model.evaluate(X, std=True)
         Y_std = val['S']
         X = transformation.undo(x=X)
-
         uncertainty = np.prod(Y_std, axis=1)
         top_indices = np.argsort(uncertainty)[::-1][:self.batch_size]
         return X[top_indices], None

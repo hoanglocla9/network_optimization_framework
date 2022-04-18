@@ -5,7 +5,7 @@ from pymoo.util.normalization import normalize
 import multiprocessing as mp
 NUM_PROCESSORS = 4
 import random, os, re
-from problem.network_optimization.util.virtual_run import runWithShortestPath
+from cdn.util.virtual_run import runWithShortestPath
 
 def runSimulationWithPredefinedDistribution(topo, runReqNums):
     graph = topo.graph
